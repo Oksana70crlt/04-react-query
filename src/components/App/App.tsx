@@ -1,4 +1,8 @@
 import { useEffect, useState } from 'react';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import ReactPaginateModule from 'react-paginate';
+import type { ReactPaginateProps } from 'react-paginate';
+import type { ComponentType } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import SearchBar from '../SearchBar/SearchBar';
 import MovieGrid from '../MovieGrid/MovieGrid';
@@ -9,53 +13,40 @@ import { fetchMovies } from '../../services/movieService';
 import type { Movie } from '../../types/movie';
 import styles from './App.module.css';
 
+type ModuleWithDefault<T> = { default: T };
+
+const ReactPaginate = (
+  ReactPaginateModule as unknown as ModuleWithDefault<
+    ComponentType<ReactPaginateProps>
+  >
+).default;
+
 // основний компонент App  ===================================
 function App() {
   // стани
-  const [movies, setMovies] = useState<Movie[]>([]);
   const [query, setQuery] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isError, setIsError] = useState(false);
+  const [page, setPage] = useState(1); // для пагінації
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
+
+  // використання useQuery для отримання фільмів
+  const { data, isLoading, isError, isPlaceholderData } = useQuery({
+    queryKey: ['movies', query, page], // ключ запиту з залежностями
+    queryFn: () => fetchMovies({ query, page }), // функція для отримання даних
+    enabled: query !== '', // запит виконується лише якщо query не порожній
+    placeholderData: keepPreviousData,
+  });
 
   //useEffect для виклику API при зміні query
   useEffect(() => {
-    if (query === '') {
-      return; // якщо запит порожній — нічого не робимо
+    if (data && data.results.length === 0) {
+      toast.error('No movies found for your request.');
     }
-
-    //функція для отримання фільмів
-    async function getMovies() {
-      try {
-        setIsError(false); // перед новим запитом скидаємо помилку
-        setIsLoading(true);
-
-        const data = await fetchMovies({ query }); // виклик API
-
-        if (data.length === 0) {
-          setMovies([]);
-          toast.error('No movies found for your request.');
-          return;
-        }
-
-        // якщо є дані — зберігаємо їх у стан
-        setMovies(data);
-      } catch {
-        setIsError(true);
-        setMovies([]);
-      } finally {
-        setIsLoading(false); // у будь-якому випадку вимикаємо індикатор
-      }
-    }
-
-    getMovies();
-  }, [query]);
+  }, [data]);
 
   // обробник пошуку: очищаємо попередні дані і встановлюємо новий запит
   const handleSearch = (newQuery: string) => {
-    setMovies([]);
-    setIsError(false);
     setSelectedMovie(null); // закриваємо модалку при новому пошуку
+    setPage(1); // скидаємо сторінку на 1 при новому пошуку
     setQuery(newQuery);
   };
 
@@ -69,6 +60,11 @@ function App() {
     setSelectedMovie(null);
   };
 
+  // масив фільмів із data або порожній масив
+  const movies = data?.results ?? [];
+
+  const totalPages = data?.total_pages ?? 0; // загальна кількість сторінок із відповіді
+
   // рендеринг компонента
   return (
     <div className={styles.app}>
@@ -76,12 +72,28 @@ function App() {
       <SearchBar onSubmit={handleSearch} />
 
       {/* умови рендерингу */}
-      {isLoading && <Loader />}
+      {isLoading && !isPlaceholderData && <Loader />}
       {isError && <ErrorMessage />}
+
       {!isLoading && !isError && movies.length > 0 && (
-        <MovieGrid movies={movies} onSelect={handleSelectMovie} />
+        <>
+          {totalPages > 1 && (
+            <ReactPaginate
+              pageCount={totalPages}
+              pageRangeDisplayed={5}
+              marginPagesDisplayed={1}
+              onPageChange={({ selected }) => setPage(selected + 1)}
+              forcePage={page - 1}
+              containerClassName={styles.pagination}
+              activeClassName={styles.active}
+              nextLabel="→"
+              previousLabel="←"
+            />
+          )}
+          <MovieGrid movies={movies} onSelect={handleSelectMovie} />
+        </>
       )}
-      {selectedMovie && ( //якщо selectedMovie вже не null, то спрацює  цей умовний рендер
+      {selectedMovie && (
         <MovieModal movie={selectedMovie} onClose={handleCloseModal} />
       )}
     </div>
